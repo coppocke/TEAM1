@@ -1,0 +1,299 @@
+library(tidyverse)
+library(stringr)
+library(readr)
+
+## Do ANOVA between groups for Drinking Age and Religion to see which subgroups
+## you can combine. Then, do it again with new groups (in a sensible way). Next,
+## after one-hot coding them as binary for multiple regression, select the reference
+## category from each variable to be the one that stands apart from the others.
+## Consider doing this for civil liberties and regime as well. 
+## Also, center consumption variables (subtract of means).
+## Finally, check model for normality conditions.
+
+alc.inc.2019 <- DrugDataSetFull %>% 
+  filter(year == 2019) %>%
+  distinct() %>%
+  filter(sex == "Both" & measure == "Incidence" & cause == "Alcohol use disorders") %>%
+  select(7:11,13:15,17:18)
+
+###### ANOVAS
+
+## RELIGION
+AOVreligion <- aov(val ~ Religion, data = alc.inc.2019)
+summary(AOVreligion)
+# This tells us there is at least one significantly different group 
+TukeyHSD(AOVreligion)
+# This tells us there is a significant difference between Islam and Christianity,
+# but there is not between Other and Christianity or Other and Islam. However, 
+# there is more evidence of a difference between Christianity and Other than Islam
+# and Other, so we can use Christianity as our reference variable. 
+
+tapply(alc.inc.2019$val, alc.inc.2019$Religion, summary)
+# Check summary statistics for Religion.
+
+## DRINKING AGE
+# TRYING WITH 5 LEVELS
+AOVdrinkage <- aov(val ~ AgeToDrink.2016, data = alc.inc.2019)
+summary(AOVdrinkage)
+# This tells us there is at least one significantly different group
+TukeyHSD(AOVdrinkage)
+# This tells us there is a significant difference between None and 18, Total ban
+# and 18, Total ban and Over 18, and Total ban and Under 18. Interestingly, there
+# is not a significant difference between Total ban and None. 
+# We can group together Under 18 and 18, since there is no evidence of difference,
+# as well as their relationships to the other groups being similar. 
+
+# TRYING WITH 4 LEVELS
+alc.inc.2019$AgeToDrink.2016 <- str_replace(alc.inc.2019$AgeToDrink.2016, "Under 18", "18")
+alc.inc.2019$AgeToDrink.2016 <- str_replace(alc.inc.2019$AgeToDrink.2016, "18", "18 and Under")
+alc.inc.2019$AgeToDrink.2016 <- str_replace(alc.inc.2019$AgeToDrink.2016, "Over 18 and Under", "Over 18")
+alc.inc.2019 <- mutate_at(alc.inc.2019, vars(AgeToDrink.2016), as.factor)
+# With this new factorization, we can repeat the above...
+
+AOVdrinkage <- aov(val ~ AgeToDrink.2016, data = alc.inc.2019)
+TukeyHSD(AOVdrinkage)
+# This tells us that Total ban is significantly different from both aged groups
+# but NOT from None (??!). Maybe we could have three groups: None, Total ban, and
+# Other. Or possibly Under 18 (including None), 18 and Up, and Total ban??
+
+# TRYING WITH 3 LEVELS by combining the aged ones together.
+alc.inc.2019$AgeToDrink.2016 <- str_replace(alc.inc.2019$AgeToDrink.2016, "18 and Under", "Specified Age")
+alc.inc.2019$AgeToDrink.2016 <- str_replace(alc.inc.2019$AgeToDrink.2016, "Over 18", "Specified Age")
+alc.inc.2019 <- mutate_at(alc.inc.2019, vars(AgeToDrink.2016), as.factor)
+# With this new factorization, we can repeat the above...
+
+AOVdrinkage <- aov(val ~ AgeToDrink.2016, data = alc.inc.2019)
+TukeyHSD(AOVdrinkage)
+# This tells us that Age Specific is Different from both the others. We could use
+# it as our reference.
+
+tapply(alc.inc.2019$val, alc.inc.2019$AgeToDrink.2016, summary)
+# Checking summary statistic for Drinking Age
+
+
+## CIVIL LIBERTIES
+AOVliberties <- aov(val ~ civlibs_fh, data = alc.inc.2019)
+summary(AOVliberties)
+TukeyHSD(AOVliberties)
+# This tells us that High liberties is significantly different from the others,
+# but Moderate and Low are not different, agreeing with summary statistics (below).
+tapply(alc.inc.2019$val, alc.inc.2019$civlibs_fh, summary)
+
+alc.inc.2019$civlibs_fh <- str_replace(alc.inc.2019$civlibs_fh, "Moderate Liberties", "Other")
+alc.inc.2019$civlibs_fh <- str_replace(alc.inc.2019$civlibs_fh, "Low Liberties", "Other")
+alc.inc.2019 <- mutate_at(alc.inc.2019, vars(civlibs_fh), as.factor)
+# Combining Low and Moderate, we now have "High Liberties" and "Other."
+
+## REGIME TYPE
+AOVregime <- aov(val ~ regime_row_owid, data = alc.inc.2019)
+summary(AOVregime)
+TukeyHSD(AOVregime)
+# This tells us that Closed Autocracy is significantly different from the others.
+# It looks like Electoral Autocracy and Electoral Democracy are similar enough to
+# lump together.
+tapply(alc.inc.2019$val, alc.inc.2019$regime_row_owid, summary)
+
+alc.inc.2019$regime_row_owid <- str_replace(alc.inc.2019$regime_row_owid, "Electoral Autocracy", "Electoral")
+alc.inc.2019$regime_row_owid <- str_replace(alc.inc.2019$regime_row_owid, "Electoral Democracy", "Electoral")
+alc.inc.2019 <- mutate_at(alc.inc.2019, vars(regime_row_owid), as.factor)
+
+# Checking again now with the 3 factors. 
+AOVregime <- aov(val ~ regime_row_owid, data = alc.inc.2019)
+summary(AOVregime)
+TukeyHSD(AOVregime)
+# Now all the pairwise comparisons are significant!
+
+
+
+####### NOW FOR ONE-HOT ENCODING AND REGRESSIONS
+alc.inc.2019.binary <- alc.inc.2019 %>%
+  mutate(Islam = (Religion == "Islam")*1,
+         Christianity = (Religion == "Christianity")*1,
+         OtherReligion = (Religion == "Other")*1,
+         AgeSpecific = (AgeToDrink.2016 == "Specified Age")*1,
+         None = (AgeToDrink.2016 == "None")*1,
+         TotalBan = (AgeToDrink.2016 == "Total ban")*1,
+         HighLiberties = (civlibs_fh == "High Liberties")*1,
+         OtherLiberties = (civlibs_fh == "Other")*1,
+         Electoral = (regime_row_owid == "Electoral")*1,
+         LiberalDemocracy = (regime_row_owid == "Liberal Democracy")*1,
+         ClosedAutocracy = (regime_row_owid == "Closed Autocracy")*1)
+
+
+## Dataset tidying for testing
+BINARYDATA <- alc.inc.2019.binary %>% select(1,5:8,10:21) %>% drop_na()
+cor(BINARYDATA)
+
+# We want Christianity, Age Specific, Closed Autocracy and High Liberties as 
+# our references.
+model1 <- lm(val ~ . - Christianity - AgeSpecific - ClosedAutocracy - HighLiberties, data = BINARYDATA)
+summary(model1)
+
+## NOW FOR SOME PLAYING TO FIND A BEST MODEL (highest r^2 with mostly significant)
+model <- lm(val1 ~ . - val - Christianity - AgeSpecific - ClosedAutocracy - HighLiberties - OtherLiberties - GDPPerCapita - LiberalDemocracy - Unemployment - TotalBan - OtherReligion - None, data = BINARYDATA)
+summary(model)
+# This final model has R^2 adj. of 0.3348, and uses all three Consumption variables,
+# Islam, None, and Electoral. 
+
+
+### GRAPHICS
+
+boxplot(alc.inc.2019$val~alc.inc.2019$Religion, main="Global AUD for Countries by Religion (2019)", ylab="AUD per 100k", xlab='Religious Majority', col='cyan')
+boxplot(alc.inc.2019$val~alc.inc.2019$AgeToDrink.2016, main="Global AUD for Countries by MLDA (2019)", ylab="AUD per 100k", xlab='Minimum Legal Drinking Age', col='cyan')
+
+# log transforming incidences since it helped deaths so much
+
+BINARYDATA <- mutate(BINARYDATA, val1 = log(val))
+modellog <- lm(val1 ~ . - val - Christianity - AgeSpecific - ClosedAutocracy - HighLiberties - OtherLiberties - GDPPerCapita - LiberalDemocracy - Unemployment - TotalBan - OtherReligion - None, data = BINARYDATA)
+summary(modellog)
+
+olsrr::ols_test_normality(modellog)
+
+plot(modellog)
+
+### NOW WITH DEATHS
+alc.death.2019 <- DrugDataSetFull %>% 
+  filter(year == 2019) %>%
+  distinct() %>%
+  filter(sex == "Both" & measure == "Deaths" & cause == "Alcohol use disorders") %>%
+  select(7:11,13:15,17:18)
+
+###### ANOVAS
+
+## RELIGION
+AOVreligion1 <- aov(val ~ Religion, data = alc.death.2019)
+summary(AOVreligion1)
+# This tells us there is at least one significantly different group 
+TukeyHSD(AOVreligion1)
+# This tells us there is a significant difference between Islam and Christianity,
+# but there is not between Other and Christianity or Other and Islam. However, 
+# there is more evidence of a difference between Christianity and Other than Islam
+# and Other, so we can use Christianity as our reference variable. 
+
+tapply(alc.death.2019$val, alc.death.2019$Religion, summary)
+# Check summary statistics for Religion.
+
+## DRINKING AGE
+# TRYING WITH 5 LEVELS
+AOVdrinkage1 <- aov(val ~ AgeToDrink.2016, data = alc.death.2019)
+summary(AOVdrinkage1)
+# This tells us there is at least one significantly different group
+TukeyHSD(AOVdrinkage1)
+# This tells us there is a significant difference between None and 18, Total ban
+# and 18, Total ban and Over 18, and Total ban and Under 18. Interestingly, there
+# is not a significant difference between Total ban and None. 
+# We can group together Under 18 and 18, since there is no evidence of difference,
+# as well as their relationships to the other groups being similar. 
+
+# TRYING WITH 4 LEVELS
+alc.death.2019$AgeToDrink.2016 <- str_replace(alc.death.2019$AgeToDrink.2016, "Under 18", "18")
+alc.death.2019$AgeToDrink.2016 <- str_replace(alc.death.2019$AgeToDrink.2016, "18", "18 and Under")
+alc.death.2019$AgeToDrink.2016 <- str_replace(alc.death.2019$AgeToDrink.2016, "Over 18 and Under", "Over 18")
+alc.death.2019 <- mutate_at(alc.death.2019, vars(AgeToDrink.2016), as.factor)
+# With this new factorization, we can repeat the above...
+
+AOVdrinkage1 <- aov(val ~ AgeToDrink.2016, data = alc.death.2019)
+TukeyHSD(AOVdrinkage1)
+# This tells us that Total ban is significantly different from both aged groups
+# but NOT from None (??!). Maybe we could have three groups: None, Total ban, and
+# Other. Or possibly Under 18 (including None), 18 and Up, and Total ban??
+
+# TRYING WITH 3 LEVELS by combining the aged ones together.
+alc.death.2019$AgeToDrink.2016 <- str_replace(alc.death.2019$AgeToDrink.2016, "18 and Under", "Specified Age")
+alc.death.2019$AgeToDrink.2016 <- str_replace(alc.death.2019$AgeToDrink.2016, "Over 18", "Specified Age")
+alc.death.2019 <- mutate_at(alc.death.2019, vars(AgeToDrink.2016), as.factor)
+# With this new factorization, we can repeat the above...
+
+AOVdrinkage1 <- aov(val ~ AgeToDrink.2016, data = alc.death.2019)
+TukeyHSD(AOVdrinkage1)
+# This tells us that Age Specific is Different from both the others. We could use
+# it as our reference.
+
+tapply(alc.death.2019$val, alc.inc.2019$AgeToDrink.2016, summary)
+# Checking summary statistic for Drinking Age
+
+
+## CIVIL LIBERTIES
+AOVliberties1 <- aov(val ~ civlibs_fh, data = alc.death.2019)
+summary(AOVliberties1)
+TukeyHSD(AOVliberties1)
+# This tells us that High liberties is significantly different from the others,
+# but Moderate and Low are not different, agreeing with summary statistics (below).
+tapply(alc.death.2019$val, alc.death.2019$civlibs_fh, summary)
+
+alc.death.2019$civlibs_fh <- str_replace(alc.death.2019$civlibs_fh, "Moderate Liberties", "Other")
+alc.death.2019$civlibs_fh <- str_replace(alc.death.2019$civlibs_fh, "Low Liberties", "Other")
+alc.death.2019 <- mutate_at(alc.death.2019, vars(civlibs_fh), as.factor)
+# Combining Low and Moderate, we now have "High Liberties" and "Other."
+
+## REGIME TYPE
+AOVregime1 <- aov(val ~ regime_row_owid, data = alc.death.2019)
+summary(AOVregime1)
+TukeyHSD(AOVregime1)
+# This tells us that Closed Autocracy is significantly different from the others.
+# It looks like Electoral Autocracy and Electoral Democracy are similar enough to
+# lump together.
+tapply(alc.death.2019$val, alc.death.2019$regime_row_owid, summary)
+
+alc.death.2019$regime_row_owid <- str_replace(alc.death.2019$regime_row_owid, "Electoral Autocracy", "Electoral")
+alc.death.2019$regime_row_owid <- str_replace(alc.death.2019$regime_row_owid, "Electoral Democracy", "Electoral")
+alc.death.2019 <- mutate_at(alc.death.2019, vars(regime_row_owid), as.factor)
+
+# Checking again now with the 3 factors. 
+AOVregime1 <- aov(val ~ regime_row_owid, data = alc.death.2019)
+summary(AOVregime1)
+TukeyHSD(AOVregime1)
+# Now all the pairwise comparisons are significant!
+
+
+
+####### NOW FOR ONE-HOT ENCODING AND REGRESSIONS
+
+alc.death.2019.binary <- alc.death.2019 %>%
+  mutate(Islam = (Religion == "Islam")*1,
+         Christianity = (Religion == "Christianity")*1,
+         OtherReligion = (Religion == "Other")*1,
+         AgeSpecific = (AgeToDrink.2016 == "Specified Age")*1,
+         None = (AgeToDrink.2016 == "None")*1,
+         TotalBan = (AgeToDrink.2016 == "Total ban")*1,
+         HighLiberties = (civlibs_fh == "High Liberties")*1,
+         OtherLiberties = (civlibs_fh == "Other")*1,
+         Electoral = (regime_row_owid == "Electoral")*1,
+         LiberalDemocracy = (regime_row_owid == "Liberal Democracy")*1,
+         ClosedAutocracy = (regime_row_owid == "Closed Autocracy")*1)
+
+
+## Dataset tidying for testing
+BINARYDATA1 <- alc.death.2019.binary %>% select(1,5:8,10:21) %>% drop_na()
+cor(BINARYDATA)
+
+# We want Christianity, Age Specific, Closed Autocracy and High Liberties as 
+# our references.
+
+## NOW FOR SOME PLAYING TO FIND A BEST MODEL (highest r^2 with mostly significant)
+modeldeaths <- lm(val ~ AvgSpiritConsump.L, data = BINARYDATA1)
+summary(modeldeaths)
+
+
+### NOW FOR RESIDUAL TESTING AND OUTLIER STUFF WITH DEATHS MODEL
+olsrr::ols_test_normality(modeldeaths)
+plot(modeldeaths)
+
+## 12 is an influential point
+
+### retrying model without Belarus.
+BINARYDATA2 <- BINARYDATA1 %>%
+  slice(-12)
+
+deaths <- lm(val ~ AvgSpiritConsump.L, data = BINARYDATA2)
+summary(deaths)
+olsrr::ols_test_normality(deaths)
+plot(deaths)
+
+## transforming val to see if residuals will normalize
+
+BINARYDATA2 <- BINARYDATA2 %>% mutate(val1 = log(val))
+deaths1 <- lm(val1 ~ AvgSpiritConsump.L + Islam + AvgBeerConsump.L, data= BINARYDATA2)
+summary(deaths1)
+olsrr::ols_test_normality(deaths1)
+plot(deaths1)
